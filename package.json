@@ -1,0 +1,19 @@
+{
+  "name": "ashwab-wp-access-and-hide",
+  "version": "1.0.0",
+  "description": "**Ashwab WP Access and Hide** is a powerful WordPress plugin designed to give administrators granular control over the WordPress dashboard. It allows you to restrict access to specific menu items, pages, and post types for all users except a designated administrator and excluded users.",
+  "main": "ashwab-wp-access-and-hide.php",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/essambarghsh/ashwab-wp-access-and-hide.git"
+  },
+  "author": "Essam Barghsh",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/essambarghsh/ashwab-wp-access-and-hide/issues"
+  },
+  "homepage": "https://github.com/essambarghsh/ashwab-wp-access-and-hide#readme"
+}
