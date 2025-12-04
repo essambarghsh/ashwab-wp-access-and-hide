@@ -262,11 +262,11 @@ class Ashwab_Access_Hide {
 			<div class="ashwab-tab-content" id="tab-css" style="<?php echo $active_tab !== 'css' ? 'display:none;' : ''; ?>">
 				<div class="ashwab-card">
 					<h2>CSS Hiding</h2>
-					<p>Enter CSS classes or IDs to hide elements in the dashboard.</p>
-					<p class="description">Format: <code>.classname</code> or <code>#idname</code>.</p>
+					<p>Enter CSS selectors to hide elements in the dashboard.</p>
+					<p class="description">Examples: <code>.classname</code>, <code>#idname</code>, <code>select#product-type option[value="simple"]</code>, <code>div.my-class > span</code></p>
 					
 					<div class="ashwab-input-group">
-						<input type="text" id="ashwab-css-element" placeholder=".class or #id">
+						<input type="text" id="ashwab-css-element" placeholder="CSS selector">
 						<button id="ashwab-add-css-element" class="button">Add Element</button>
 					</div>
 					<ul id="ashwab-css-elements-list">
@@ -685,8 +685,8 @@ class Ashwab_Access_Hide {
 			$css_elements = array();
 			foreach ( $imported_data['css_hide_elements'] as $element ) {
 				$element = sanitize_text_field( $element );
-				// Validate format
-				if ( strpos( $element, '.' ) === 0 || strpos( $element, '#' ) === 0 ) {
+				// Validate format using the helper method
+				if ( $this->is_valid_css_selector( $element ) ) {
 					$css_elements[] = $element;
 				}
 			}
@@ -739,14 +739,15 @@ class Ashwab_Access_Hide {
 			wp_send_json_error( 'Unauthorized' );
 		}
 
-		$element = isset( $_POST['element'] ) ? sanitize_text_field( $_POST['element'] ) : '';
+		// Use wp_unslash to remove magic quotes before sanitizing
+		$element = isset( $_POST['element'] ) ? sanitize_text_field( wp_unslash( $_POST['element'] ) ) : '';
 		if ( empty( $element ) ) {
 			wp_send_json_error( 'Invalid Element' );
 		}
 
-		// Validation: Must start with . or #
-		if ( strpos( $element, '.' ) !== 0 && strpos( $element, '#' ) !== 0 ) {
-			wp_send_json_error( 'Invalid format. Must start with . or #' );
+		// Validate CSS selector format
+		if ( ! $this->is_valid_css_selector( $element ) ) {
+			wp_send_json_error( 'Invalid CSS selector format' );
 		}
 
 		$elements = get_option( $this->css_hide_elements_option, array() );
@@ -765,7 +766,8 @@ class Ashwab_Access_Hide {
 			wp_send_json_error( 'Unauthorized' );
 		}
 
-		$element = isset( $_POST['element'] ) ? sanitize_text_field( $_POST['element'] ) : '';
+		// Use wp_unslash to remove magic quotes before sanitizing
+		$element = isset( $_POST['element'] ) ? sanitize_text_field( wp_unslash( $_POST['element'] ) ) : '';
 		$elements = get_option( $this->css_hide_elements_option, array() );
 
 		$elements = array_filter( $elements, function( $el ) use ( $element ) {
@@ -869,24 +871,27 @@ class Ashwab_Access_Hide {
 			return;
 		}
 
-		$screen = get_current_screen();
 		$items = get_option( $this->option_name, array() );
-		
-		// Get current URL relative path
-		// $current_url = add_query_arg( $_GET, $screen->parent_file ); // Old logic
+		$current_uri = isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '';
 		
 		$denied = false;
 		
 		foreach ( $items as $item ) {
-			// Check if we are on the restricted page
-			// Case 1: It's a menu slug (e.g. 'options-general.php')
-			if ( strpos( $_SERVER['REQUEST_URI'], $item['value'] ) !== false ) {
+			$item_value = $item['value'];
+			
+			// Case 1: It's a specific page slug (e.g. 'my-plugin-page' or 'wc-admin')
+			if ( isset( $_GET['page'] ) && $_GET['page'] === $item_value ) {
+				// If current URL has 'path' parameter, it's a sub-page (WooCommerce/SPA style)
+				// Don't block sub-pages when only the main page slug is blocked
+				if ( isset( $_GET['path'] ) ) {
+					continue; // Skip to next item
+				}
 				$denied = true;
 				break;
 			}
 			
-			// Case 2: It's a specific page slug (e.g. 'my-plugin-page')
-			if ( isset( $_GET['page'] ) && $_GET['page'] === $item['value'] ) {
+			// Case 2: It's a URL/path (e.g. 'options-general.php' or 'admin.php?page=wc-admin')
+			if ( $this->is_url_match( $current_uri, $item_value ) ) {
 				$denied = true;
 				break;
 			}
@@ -896,6 +901,117 @@ class Ashwab_Access_Hide {
 			$this->log_access_attempt();
 			$this->handle_redirect();
 		}
+	}
+
+	/**
+	 * Check if the current URL matches the blocked item.
+	 * Uses subset matching: blocks if all blocked params are present in current URL.
+	 * Special exception for 'path' parameter (WooCommerce/SPA routing).
+	 *
+	 * @param string $current_uri The current request URI.
+	 * @param string $blocked_value The blocked item value.
+	 * @return bool True if blocked, false otherwise.
+	 */
+	private function is_url_match( $current_uri, $blocked_value ) {
+		// Parse the blocked value
+		$blocked_parts = wp_parse_url( $blocked_value );
+		$blocked_path = isset( $blocked_parts['path'] ) ? $blocked_parts['path'] : $blocked_value;
+		$blocked_query = isset( $blocked_parts['query'] ) ? $blocked_parts['query'] : '';
+		
+		// Parse the current URI
+		$current_parts = wp_parse_url( $current_uri );
+		$current_path = isset( $current_parts['path'] ) ? $current_parts['path'] : '';
+		$current_query = isset( $current_parts['query'] ) ? $current_parts['query'] : '';
+		
+		// Check if the path contains the blocked path
+		$path_matches = ( strpos( $current_path, $blocked_path ) !== false );
+		
+		if ( ! $path_matches ) {
+			return false;
+		}
+		
+		// If blocked value has a query string, compare query params
+		if ( ! empty( $blocked_query ) ) {
+			parse_str( $blocked_query, $blocked_params );
+			parse_str( $current_query, $current_params );
+			
+			// Special case for 'path' parameter (WooCommerce/SPA style routing)
+			// If current URL has 'path' but blocked URL doesn't, treat as different page
+			if ( isset( $current_params['path'] ) && ! isset( $blocked_params['path'] ) ) {
+				return false;
+			}
+			
+			// Use subset matching: block if all blocked params exist in current params
+			// This ensures edit.php?post_type=X also blocks edit.php?post_type=X&action=Y
+			return $this->is_params_subset( $blocked_params, $current_params );
+		}
+		
+		// For simple paths without query strings (e.g., 'options-general.php')
+		// Block regardless of additional query params (maintains security)
+		return true;
+	}
+
+	/**
+	 * Check if all parameters in subset exist in superset with same values.
+	 *
+	 * @param array $subset The parameters that must be present.
+	 * @param array $superset The parameters to check against.
+	 * @return bool True if subset params are all present in superset.
+	 */
+	private function is_params_subset( $subset, $superset ) {
+		foreach ( $subset as $key => $value ) {
+			if ( ! isset( $superset[ $key ] ) || $superset[ $key ] !== $value ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Validate a CSS selector string.
+	 * Allows class selectors, ID selectors, element selectors, attribute selectors,
+	 * pseudo-classes, and combinators.
+	 *
+	 * @param string $selector The CSS selector to validate.
+	 * @return bool True if valid, false otherwise.
+	 */
+	private function is_valid_css_selector( $selector ) {
+		if ( empty( $selector ) ) {
+			return false;
+		}
+
+		// Allow only safe characters for CSS selectors:
+		// - Alphanumeric characters (a-z, A-Z, 0-9)
+		// - Hyphens (-) and underscores (_)
+		// - Dots (.) for class selectors
+		// - Hash (#) for ID selectors
+		// - Brackets ([]) for attribute selectors
+		// - Quotes ("') for attribute values
+		// - Equals (=) for attribute matching
+		// - Colons (:) for pseudo-classes/elements
+		// - Spaces for descendant combinators
+		// - Greater than (>) for child combinators
+		// - Plus (+) for adjacent sibling combinators
+		// - Tilde (~) for general sibling combinators
+		// - Asterisk (*) for universal selector
+		// - Caret (^), dollar ($), pipe (|) for attribute substring matching
+		// - Parentheses () for functional pseudo-classes like :not()
+		$allowed_pattern = '/^[a-zA-Z0-9\.\#\[\]\"\'\=\:\-\_\s\>\+\~\*\^\$\|\(\)]+$/';
+		
+		if ( ! preg_match( $allowed_pattern, $selector ) ) {
+			return false;
+		}
+
+		// Ensure it doesn't contain dangerous patterns (e.g., url(), expression(), javascript:)
+		$dangerous_patterns = array( 'url(', 'expression(', 'javascript:', 'behavior:', '@import', '</style', '<script' );
+		$selector_lower = strtolower( $selector );
+		foreach ( $dangerous_patterns as $pattern ) {
+			if ( strpos( $selector_lower, $pattern ) !== false ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private function log_access_attempt() {
@@ -940,11 +1056,37 @@ class Ashwab_Access_Hide {
 		global $submenu;
 		$items = get_option( $this->option_name, array() );
 		
+		// Check if current page is a sub-page that should be allowed
+		// (WooCommerce uses 'path' parameter for SPA-style routing)
+		$current_page = isset( $_GET['page'] ) ? $_GET['page'] : '';
+		$has_path_param = isset( $_GET['path'] );
+		
 		foreach ( $items as $item ) {
+			$item_value = $item['value'];
+			
+			// Check if this blocked item matches the current page
+			// If the current URL has a 'path' parameter and the blocked item doesn't include 'path',
+			// don't hide the menu - the user should be allowed to access the sub-page
+			if ( $has_path_param ) {
+				// Check if item_value is just a page slug (e.g., 'wc-admin')
+				if ( $current_page === $item_value ) {
+					continue; // Don't hide - user is on an allowed sub-page
+				}
+				
+				// Check if item_value is a URL with page parameter but no path
+				// (e.g., 'admin.php?page=wc-admin')
+				if ( strpos( $item_value, '?' ) !== false ) {
+					parse_str( wp_parse_url( $item_value, PHP_URL_QUERY ) ?: '', $item_params );
+					if ( isset( $item_params['page'] ) && $item_params['page'] === $current_page && ! isset( $item_params['path'] ) ) {
+						continue; // Don't hide - user is on an allowed sub-page
+					}
+				}
+			}
+			
 			if ( ! empty( $item['parent'] ) ) {
-				remove_submenu_page( $item['parent'], $item['value'] );
+				remove_submenu_page( $item['parent'], $item_value );
 			} else {
-				remove_menu_page( $item['value'] );
+				remove_menu_page( $item_value );
 			}
 
 			// Brute force cleanup for submenus to ensure they are removed
@@ -952,7 +1094,7 @@ class Ashwab_Access_Hide {
 			if ( ! empty( $submenu ) ) {
 				foreach ( $submenu as $parent => $subs ) {
 					foreach ( $subs as $index => $sub ) {
-						if ( isset( $sub[2] ) && $sub[2] === $item['value'] ) {
+						if ( isset( $sub[2] ) && $sub[2] === $item_value ) {
 							unset( $submenu[$parent][$index] );
 						}
 					}
