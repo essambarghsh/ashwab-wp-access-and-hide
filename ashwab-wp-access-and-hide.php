@@ -3,7 +3,13 @@
  * Plugin Name: Ashwab WP Access and Hide
  * Description: Restricts access to specific WordPress dashboard content for all users except a designated administrator.
  * Version: 1.0.0
- * Author: Ashwab
+ * Requires at least: 6.8
+ * Requires PHP: 7.2
+ * Author: Essam Barghsh, Ashwab
+ * Author URI: https://www.ashwab.com
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Update URI: https://www.ashwab.com
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
